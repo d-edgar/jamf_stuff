@@ -10,9 +10,15 @@ if [[ -z "${applicationPath}" ]]; then
     exit 1
 fi
 
-## Closing Application
+# Reject paths with directory traversal to prevent accidental deletion outside /Applications
+if [[ "${applicationPath}" == *"/"* || "${applicationPath}" == *".."* ]]; then
+    echo "Invalid application name: must be a plain app name, not a path."
+    exit 1
+fi
+
+## Closing Application (non-fatal if app is not running)
 echo "Closing application: ${applicationPath}"
-pkill "${applicationPath}"
+pkill "${applicationPath}" || echo "Application not running, skipping kill."
 
 ## Removing Application
 echo "Removing application: ${applicationPath}"
