@@ -2,8 +2,9 @@
 
 # Variables
 URL="https://drive.google.com/drive/home"
-LINK_NAME="GoggleDrive" 
-DESKTOP_PATH="$HOME/Desktop"
+LINK_NAME="GoogleDrive"
+CURRENT_USER=$(scutil --get ConsoleUser | awk '{print $1}')
+DESKTOP_PATH="/Users/$CURRENT_USER/Desktop"
 
 # Create the .webloc file
 cat <<EOF > "$DESKTOP_PATH/$LINK_NAME.webloc"
