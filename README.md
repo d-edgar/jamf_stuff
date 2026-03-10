@@ -18,6 +18,7 @@ By leveraging these EAs and scripts, you can create **Smart Groups** and **Advan
   - [MDE Scripts](#mde-scripts)
   - [Application Management](#application-management)
   - [User Permissions](#user-permissions)
+  - [User Account Management](#user-account-management)
   - [System Configuration](#system-configuration)
   - [Jamf Integration](#jamf-integration)
 - [References](#references)
@@ -268,6 +269,53 @@ Allows non-admin users to access and configure Time Machine backup settings.
 **Parameters:** None
 
 **What it does:** Modifies authorization database entries for `system.preferences` and `system.preferences.timemachine`.
+
+---
+
+### User Account Management
+
+#### jamf_delete_inactive_users.sh
+
+Deletes local user accounts (and their home directories) that have been inactive for a configurable number of days. Supports two detection methods, custom exclusion lists, and a dry-run mode for safe testing.
+
+**Parameters:**
+
+- `$4` — **Days Threshold** *(Required)* — Number of inactive days before an account is deleted (e.g. `90`)
+- `$5` — **Detection Method** *(Optional, default: `folder`)* — How to determine last activity:
+  - `folder` — Uses the home folder's last modification date. Simple and reliable.
+  - `login` — Parses actual console login records via the `last` command. Falls back to `folder` if no login record is found.
+- `$6` — **Extra Exclusions** *(Optional)* — Comma-separated list of usernames to protect from deletion, in addition to the built-in exclusions (e.g. `labuser,kiosk,sharedacct`)
+- `$7` — **Dry Run** *(Optional, default: `false`)* — Set to `true` to log what *would* be deleted without actually removing anything. Always run in dry-run mode first to verify targeting.
+
+**Jamf Parameter Labels (Options tab):**
+
+| Parameter | Label |
+|---|---|
+| Parameter 4 | `Days Inactive Before Deletion (e.g. 90)` |
+| Parameter 5 | `Detection Method: folder (default) or login` |
+| Parameter 6 | `Extra Excluded Users (comma-separated, optional)` |
+| Parameter 7 | `Dry Run: true or false (default: false)` |
+
+**Built-in exclusions (always protected):** `root`, `administrator`, `Guest`, `Shared`, `_mbsetupuser`, `daemon`, `nobody`, and the currently logged-in console user.
+
+**What it does:**
+
+1. Validates the days threshold parameter and detection method
+2. Builds a combined exclusion list from built-in accounts, the current console user, and any custom exclusions from `$6`
+3. Enumerates all home directories under `/Users/` and checks each against Directory Services
+4. For each non-excluded user, calculates inactive days using the chosen detection method
+5. If the user exceeds the threshold, deletes the account via `sysadminctl -deleteUser` (with a `dscl` fallback) and removes the home directory
+6. Logs all actions to `/var/log/jamf_user_cleanup.log` and prints a summary of deleted, skipped, and errored accounts
+
+**Exit codes:** 0 = success (all targeted accounts cleaned up), 1 = one or more errors occurred or missing required parameter
+
+**Recommended deployment:**
+
+1. Upload the script to Jamf Pro and fill in the parameter labels above
+2. Create a policy scoped to your target machines
+3. Set Parameter 7 to `true` (dry run) and run against a test group first
+4. Review `/var/log/jamf_user_cleanup.log` on the test machines to confirm correct targeting
+5. Once verified, set Parameter 7 to `false` and deploy to production
 
 ---
 
