@@ -1,6 +1,6 @@
 # Jamf Stuff
 
-This repository provides **Jamf Pro Extension Attributes (EAs)** and supporting scripts to monitor and report on the health of **Microsoft Defender for Endpoint (MDE)** on macOS devices. It also includes a collection of general-purpose Jamf Pro scripts for system configuration, user permissions, application management, and more.
+This repository provides **Jamf Pro Extension Attributes (EAs)** and supporting scripts to monitor and report on the health of **Microsoft Defender for Endpoint (MDE)** on macOS devices. It also includes a collection of general-purpose Jamf Pro scripts for system configuration, user permissions, application management, LDAP-based user lookups, and more.
 
 By leveraging these EAs and scripts, you can create **Smart Groups** and **Advanced Searches** in Jamf Pro to dynamically identify Macs that are out of compliance — for example, those with network protection stopped, real-time protection disabled, or outdated engine versions.
 
@@ -21,6 +21,8 @@ By leveraging these EAs and scripts, you can create **Smart Groups** and **Advan
   - [User Account Management](#user-account-management)
   - [System Configuration](#system-configuration)
   - [Jamf Integration](#jamf-integration)
+  - [LDAP & User Lookup](#ldap--user-lookup)
+  - [Login Window](#login-window)
 - [References](#references)
 - [Contributing](#contributing)
 - [License](#license)
@@ -377,10 +379,10 @@ Renames the Mac using its serial number with a configurable prefix and updates J
 **What it does:**
 
 1. Reads the serial number from `system_profiler`
-2. Sets `HostName`, `LocalHostName`, and `ComputerName` to `CNU{SerialNumber}`
+2. Sets `HostName`, `LocalHostName`, and `ComputerName` to `{Prefix}{SerialNumber}`
 3. Runs `jamf recon` to sync the new name
 
-**Customization:** Edit the `CNU` prefix in the script to match your organization's naming convention.
+**Customization:** Edit the prefix string in the script (currently `CNU`) to match your organization's naming convention.
 
 ---
 
@@ -452,6 +454,61 @@ Triggers a Jamf custom event from within another policy, enabling policy chainin
 | Parameter 4 | `Custom Event Name (e.g. install_printer)` |
 
 **What it does:** Runs `jamf policy -event {eventName}`. Useful for chaining policies together — for example, a prestage enrollment triggers a custom event that installs printers, which in turn triggers driver installation.
+
+---
+
+### LDAP & User Lookup
+
+#### jamf_ldap_user_lookup.sh
+
+Automatically populates a computer's User and Location fields in Jamf Pro by performing an LDAP lookup for the currently logged-in user. Designed to run as a recurring policy at check-in so that department, email, phone, position, and real name stay current without manual entry.
+
+**Parameters:**
+
+- `$4` — Jamf Pro URL (e.g. `https://yourinstance.jamfcloud.com`)
+- `$5` — API Client ID
+- `$6` — API Client Secret
+- `$7` — LDAP Server ID (default: `1`)
+
+**Jamf Parameter Labels (Options tab):**
+
+| Parameter | Label |
+|---|---|
+| Parameter 4 | `Jamf Pro URL (e.g. https://yourinstance.jamfcloud.com)` |
+| Parameter 5 | `API Client ID` |
+| Parameter 6 | `API Client Secret` |
+| Parameter 7 | `LDAP Server ID (default: 1)` |
+
+**Required API Client permissions:** Read Computers, Update Computers, Read LDAP Servers, Read Users. Create an API Role and API Client under Settings > API Roles and Clients.
+
+**What it does:**
+
+1. Authenticates to the Jamf Pro API using OAuth client credentials
+2. Identifies the current console user and looks up the computer's Jamf Pro ID via serial number
+3. Queries the LDAP server through the Classic API to retrieve the user's email, department, real name, phone, and position
+4. Updates the computer's Location record in Jamf Pro with the LDAP data, using XML-escaped values to prevent injection from special characters
+5. Invalidates the API token on exit via a cleanup trap (covers all exit paths including errors)
+
+**Logging:** All activity is logged to `/var/log/jamf_ldap_lookup.log`. Sensitive PII (email, phone, etc.) is not written to the log — only success/failure status.
+
+**Exit codes:** 0 = success or no user logged in, 1 = missing parameters, failed authentication, or failed lookup
+
+---
+
+### Login Window
+
+#### remove_PolicyBanner.sh
+
+Removes the macOS login window policy banner (`PolicyBanner.rtfd`) and forgets its package receipt.
+
+**Parameters:** None
+
+**What it does:**
+
+1. Deletes `/Library/Security/PolicyBanner.rtfd` if it exists
+2. Runs `pkgutil --forget policybanner.rtfd` to clear the installer receipt so macOS no longer tracks the package
+
+**Use case:** Deploy via Jamf policy when decommissioning a login banner that was previously installed via a package. Handles cases where the banner or receipt has already been removed.
 
 ---
 
