@@ -147,16 +147,78 @@ get_inactive_days() {
     echo "$diff_days"
 }
 
-# Delete a user account and home directory using sysadminctl
-delete_user() {
+# Gather detailed info about a user account for reporting
+get_user_report_details() {
     local username="$1"
     local home_dir="/Users/${username}"
+    local inactive_days="$2"
 
+    # Home directory size (du -sh)
+    local dir_size="unknown"
+    if [[ -d "$home_dir" ]]; then
+        dir_size="$(/usr/bin/du -sh "$home_dir" 2>/dev/null | /usr/bin/awk '{print $1}')"
+        [[ -z "$dir_size" ]] && dir_size="unknown"
+    fi
+
+    # Last activity date (human-readable)
+    local last_active_date="unknown"
+    local home_epoch
+    home_epoch="$(/usr/bin/stat -f '%m' "$home_dir" 2>/dev/null)"
+    if [[ -n "$home_epoch" ]]; then
+        last_active_date="$(/bin/date -r "$home_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
+        [[ -z "$last_active_date" ]] && last_active_date="unknown"
+    fi
+
+    # User's real name from Directory Services
+    local real_name
+    real_name="$(/usr/bin/dscl . -read "/Users/${username}" RealName 2>/dev/null \
+        | /usr/bin/sed -n '2p' | /usr/bin/xargs)"
+    [[ -z "$real_name" ]] && real_name="(none)"
+
+    # User UID
+    local uid
+    uid="$(/usr/bin/dscl . -read "/Users/${username}" UniqueID 2>/dev/null \
+        | /usr/bin/awk '{print $2}')"
+    [[ -z "$uid" ]] && uid="unknown"
+
+    echo "username=${username}|real_name=${real_name}|uid=${uid}|home_dir=${home_dir}|dir_size=${dir_size}|inactive_days=${inactive_days}|last_active=${last_active_date}"
+}
+
+# Delete a user account and home directory using sysadminctl
+# In dry-run mode, this function ONLY logs — all destructive commands are skipped.
+delete_user() {
+    local username="$1"
+    local inactive_days="$2"
+    local home_dir="/Users/${username}"
+
+    # ---- DRY RUN: report only, no destructive actions ----
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_info "[DRY RUN] Would delete user '${username}' and home directory '${home_dir}'."
+        local details
+        details="$(get_user_report_details "$username" "$inactive_days")"
+
+        local dir_size real_name uid last_active
+        dir_size="$(echo "$details"  | /usr/bin/sed 's/.*dir_size=\([^|]*\).*/\1/')"
+        real_name="$(echo "$details" | /usr/bin/sed 's/.*real_name=\([^|]*\).*/\1/')"
+        uid="$(echo "$details"       | /usr/bin/sed 's/.*uid=\([^|]*\).*/\1/')"
+        last_active="$(echo "$details" | /usr/bin/sed 's/.*last_active=\([^|]*\).*/\1/')"
+
+        log_info "[DRY RUN] ---- Would delete user '${username}' ----"
+        log_info "[DRY RUN]   Real name:        ${real_name}"
+        log_info "[DRY RUN]   UID:              ${uid}"
+        log_info "[DRY RUN]   Home directory:    ${home_dir}"
+        log_info "[DRY RUN]   Home dir size:     ${dir_size}"
+        log_info "[DRY RUN]   Inactive days:     ${inactive_days}"
+        log_info "[DRY RUN]   Last active:       ${last_active}"
+        log_info "[DRY RUN]   Action:            sysadminctl -deleteUser ${username}"
+        log_info "[DRY RUN]   Action:            Remove home directory ${home_dir}"
+
+        # Accumulate into the dry-run report array for the summary
+        DRY_RUN_REPORT+=("${username}|${real_name}|${uid}|${dir_size}|${inactive_days}|${last_active}")
+
         return 0
     fi
 
+    # ---- LIVE MODE: actually delete ----
     log_info "Deleting user account '${username}'..."
 
     # Use sysadminctl to delete the user (removes account + home dir)
@@ -193,8 +255,15 @@ delete_user() {
 # ================================= Main ======================================
 
 main() {
+    # Array to collect dry-run report entries
+    DRY_RUN_REPORT=()
+
     log_info "========== User Cleanup Script Started =========="
     log_info "Parameters: DAYS_THRESHOLD=${DAYS_THRESHOLD}, METHOD=${DETECTION_METHOD}, DRY_RUN=${DRY_RUN}"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_info "*** DRY RUN MODE — No accounts will be modified or deleted ***"
+    fi
 
     # ---- Validate parameters ----
     if [[ -z "$DAYS_THRESHOLD" ]]; then
@@ -255,7 +324,7 @@ main() {
         log_info "User '${username}' has been inactive for ${inactive_days} day(s) (threshold: ${DAYS_THRESHOLD})."
 
         if [[ "$inactive_days" -ge "$DAYS_THRESHOLD" ]]; then
-            if delete_user "$username"; then
+            if delete_user "$username" "$inactive_days"; then
                 deleted_count=$((deleted_count + 1))
             else
                 error_count=$((error_count + 1))
@@ -269,10 +338,35 @@ main() {
     log_info "========== Cleanup Summary =========="
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "Mode: DRY RUN (no changes were made)"
+        log_info "Users that WOULD be deleted: ${deleted_count}"
+        log_info "Users skipped (excluded or under threshold): ${skipped_count}"
+
+        if [[ ${#DRY_RUN_REPORT[@]} -gt 0 ]]; then
+            log_info ""
+            log_info "=============== Dry-Run Deletion Report ==============="
+            printf "%-16s %-20s %-8s %-10s %-14s %s\n" \
+                "USERNAME" "REAL NAME" "UID" "HOME SIZE" "INACTIVE DAYS" "LAST ACTIVE" \
+                | tee -a "$LOG_FILE"
+            printf "%-16s %-20s %-8s %-10s %-14s %s\n" \
+                "--------" "---------" "---" "---------" "-------------" "-----------" \
+                | tee -a "$LOG_FILE"
+            for entry in "${DRY_RUN_REPORT[@]}"; do
+                IFS='|' read -r r_user r_name r_uid r_size r_days r_active <<< "$entry"
+                printf "%-16s %-20s %-8s %-10s %-14s %s\n" \
+                    "$r_user" "$r_name" "$r_uid" "$r_size" "$r_days" "$r_active" \
+                    | tee -a "$LOG_FILE"
+            done
+            log_info "======================================================="
+            log_info ""
+            log_info "To perform actual deletion, re-run with DRY_RUN set to 'false'."
+        else
+            log_info "No users met the deletion criteria."
+        fi
+    else
+        log_info "Users deleted:  ${deleted_count}"
+        log_info "Users skipped:  ${skipped_count}"
+        log_info "Errors:         ${error_count}"
     fi
-    log_info "Users deleted:  ${deleted_count}"
-    log_info "Users skipped:  ${skipped_count}"
-    log_info "Errors:         ${error_count}"
     log_info "========== User Cleanup Script Finished =========="
 
     if [[ "$error_count" -gt 0 ]]; then

@@ -296,6 +296,53 @@ Deletes local user accounts (and their home directories) that have been inactive
 | Parameter 6 | `Extra Excluded Users (comma-separated, optional)` |
 | Parameter 7 | `Dry Run: true or false (default: false)` |
 
+**Parameter Examples (copy-paste into Jamf policy fields):**
+
+| Parameter | Example Value | What It Does |
+|---|---|---|
+| Parameter 4 | `90` | Deletes users inactive for 90+ days |
+| Parameter 4 | `30` | More aggressive — deletes after 30 days of inactivity |
+| Parameter 4 | `180` | Conservative — only deletes after 6 months |
+| Parameter 5 | `folder` | Checks the home folder's last modification timestamp (default, works on all Macs) |
+| Parameter 5 | `login` | Checks actual console login records via `last`; falls back to folder if no record found |
+| Parameter 5 | *(leave blank)* | Defaults to `folder` |
+| Parameter 6 | `labuser,kiosk` | Protects the `labuser` and `kiosk` accounts from deletion |
+| Parameter 6 | `sharedacct` | Protects a single shared account |
+| Parameter 6 | `trainee1,trainee2,labuser` | Protects multiple accounts — separate with commas, no spaces |
+| Parameter 6 | *(leave blank)* | No extra exclusions beyond the built-in list |
+| Parameter 7 | `true` | **Dry run** — logs everything that *would* be deleted but makes no changes. Always start here. |
+| Parameter 7 | `false` | **Live mode** — actually deletes inactive accounts |
+| Parameter 7 | *(leave blank)* | Defaults to `false` (live mode) |
+
+**Common Jamf policy configurations:**
+
+*Dry-run audit of 90-day inactive users on shared lab Macs:*
+
+| Parameter | Value |
+|---|---|
+| Parameter 4 | `90` |
+| Parameter 5 | `folder` |
+| Parameter 6 | `labuser,kiosk` |
+| Parameter 7 | `true` |
+
+*Production cleanup — delete users inactive 90+ days, protect shared accounts:*
+
+| Parameter | Value |
+|---|---|
+| Parameter 4 | `90` |
+| Parameter 5 | `folder` |
+| Parameter 6 | `labuser,kiosk` |
+| Parameter 7 | `false` |
+
+*Login-based detection for hotdesking environments:*
+
+| Parameter | Value |
+|---|---|
+| Parameter 4 | `60` |
+| Parameter 5 | `login` |
+| Parameter 6 | *(leave blank)* |
+| Parameter 7 | `true` |
+
 **Built-in exclusions (always protected):** `root`, `administrator`, `Guest`, `Shared`, `_mbsetupuser`, `daemon`, `nobody`, and the currently logged-in console user.
 
 **What it does:**
