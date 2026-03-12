@@ -29,12 +29,19 @@
 #
 # Notes:    Uses Classic API for LDAP server lookup (no Jamf Pro API
 #           equivalent exists yet) and Jamf Pro API for computer inventory.
+#           Does NOT require python3 or Xcode Command Line Tools —
+#           all JSON parsing uses plutil and awk (native to macOS).
 #
 # Change Log:
 #   2026-03-12 - Added $8 (LDAP_DOMAIN_SUFFIX) parameter to support LDAP
 #                directories that require a full user@domain lookup name
 #                (e.g. david.edgar@cnu.edu) instead of the short macOS
 #                console username (e.g. david.edgar).
+#              - Removed all python3 dependencies; JSON parsing now uses
+#                plutil and awk for compatibility with Macs that do not
+#                have Xcode Command Line Tools installed.
+#              - Fixed LDAP response field names (email_address, phone_number)
+#                to match actual Classic API response keys.
 ###############################################################################
 
 # =============================================================================
@@ -102,6 +109,31 @@ xml_escape() {
     str="${str//\"/&quot;}"
     str="${str//\'/&apos;}"
     echo "${str}"
+}
+
+# URL-encode a string using only bash builtins (no python3 needed)
+url_encode() {
+    local string="$1"
+    local length="${#string}"
+    local encoded=""
+    local c
+    for (( i = 0; i < length; i++ )); do
+        c="${string:i:1}"
+        case "${c}" in
+            [a-zA-Z0-9.~_-]) encoded+="${c}" ;;
+            *) encoded+=$( printf '%%%02X' "'${c}" ) ;;
+        esac
+    done
+    echo "${encoded}"
+}
+
+# Extract a JSON value using plutil (native macOS, no python3 needed)
+# Usage: plutil_extract <keypath> <json_file>
+# e.g.:  plutil_extract "results.0.id" /tmp/response.json
+plutil_extract() {
+    local keypath="$1"
+    local json_file="$2"
+    /usr/bin/plutil -extract "${keypath}" raw -o - "${json_file}" 2>/dev/null
 }
 
 # Cleanup handler — invalidates token on any exit if one was obtained
@@ -180,33 +212,20 @@ get_computer_id() {
     log_message "Serial number: ${serial_number}"
 
     # Use Jamf Pro API to get computer inventory by serial number
-    local lookup_serial_url="${JAMF_PRO_URL}/api/v1/computers-inventory?section=GENERAL&filter=hardware.serialNumber==%22${serial_number}%22"
-    log_message "DEBUG: Computer lookup URL: ${lookup_serial_url}"
-
     local tmp_response="/tmp/jamf_ldap_response_$$.json"
 
     /usr/bin/curl \
         --silent \
         --request GET \
-        --url "${lookup_serial_url}" \
+        --url "${JAMF_PRO_URL}/api/v1/computers-inventory?section=GENERAL&filter=hardware.serialNumber==%22${serial_number}%22" \
         --header "Authorization: Bearer ${API_TOKEN}" \
         --header "Accept: application/json" \
         --output "${tmp_response}"
 
-    log_message "DEBUG: Response file size: $(wc -c < "${tmp_response}") bytes"
-
-    COMPUTER_ID=$( /usr/bin/python3 -c "
-import json
-with open('${tmp_response}') as f:
-    data = json.load(f)
-results = data.get('results', [])
-if results:
-    print(results[0].get('id', ''))
-" 2>>/var/log/jamf_ldap_lookup_debug.log )
+    # Extract computer ID using plutil (native macOS JSON parser)
+    COMPUTER_ID=$( plutil_extract "results.0.id" "${tmp_response}" )
 
     rm -f "${tmp_response}"
-
-    log_message "DEBUG: Parsed COMPUTER_ID='${COMPUTER_ID}'"
 
     if [[ -z "${COMPUTER_ID}" ]]; then
         log_message "ERROR: Could not find computer ID for serial ${serial_number}."
@@ -217,51 +236,40 @@ if results:
 }
 
 # Perform LDAP lookup for the current user via Classic API
-# Parses all attributes in a single python3 call for efficiency
+# Parses all attributes using plutil (no python3 needed)
 ldap_user_lookup() {
     # URL-encode the lookup user (handles @ and other special chars)
     local encoded_user
-    encoded_user=$( /usr/bin/python3 -c "import urllib.parse; print(urllib.parse.quote('${LDAP_LOOKUP_USER}'))" )
+    encoded_user=$( url_encode "${LDAP_LOOKUP_USER}" )
 
     local lookup_url="${JAMF_PRO_URL}/JSSResource/ldapservers/id/${LDAP_SERVER_ID}/user/${encoded_user}"
 
-    local response
-    response=$( /usr/bin/curl \
+    local tmp_response="/tmp/jamf_ldap_ldap_$$.json"
+
+    /usr/bin/curl \
         --silent \
         --request GET \
         --url "${lookup_url}" \
         --header "Authorization: Bearer ${API_TOKEN}" \
         --header "Accept: application/json" \
-    )
+        --output "${tmp_response}"
 
-    # Parse all LDAP attributes in one python3 invocation
-    local parsed
-    parsed=$( echo "${response}" | /usr/bin/python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    users = data.get('ldap_users', [])
-    if users:
-        u = users[0]
-        print(u.get('email_address', u.get('email', '')))
-        print(u.get('department', ''))
-        print(u.get('realname', u.get('real_name', u.get('full_name', ''))))
-        print(u.get('phone_number', u.get('phone', '')))
-        print(u.get('position', ''))
-    else:
-        for _ in range(5):
-            print('')
-except:
-    for _ in range(5):
-        print('')
-" 2>/dev/null )
+    # Extract LDAP attributes using plutil
+    LDAP_EMAIL=$( plutil_extract "ldap_users.0.email_address" "${tmp_response}" )
+    [[ -z "${LDAP_EMAIL}" ]] && LDAP_EMAIL=$( plutil_extract "ldap_users.0.email" "${tmp_response}" )
 
-    # Read the five lines into variables
-    LDAP_EMAIL=$(    sed -n '1p' <<< "${parsed}" )
-    LDAP_DEPARTMENT=$( sed -n '2p' <<< "${parsed}" )
-    LDAP_REALNAME=$( sed -n '3p' <<< "${parsed}" )
-    LDAP_PHONE=$(    sed -n '4p' <<< "${parsed}" )
-    LDAP_POSITION=$( sed -n '5p' <<< "${parsed}" )
+    LDAP_DEPARTMENT=$( plutil_extract "ldap_users.0.department" "${tmp_response}" )
+
+    LDAP_REALNAME=$( plutil_extract "ldap_users.0.realname" "${tmp_response}" )
+    [[ -z "${LDAP_REALNAME}" ]] && LDAP_REALNAME=$( plutil_extract "ldap_users.0.real_name" "${tmp_response}" )
+    [[ -z "${LDAP_REALNAME}" ]] && LDAP_REALNAME=$( plutil_extract "ldap_users.0.full_name" "${tmp_response}" )
+
+    LDAP_PHONE=$( plutil_extract "ldap_users.0.phone_number" "${tmp_response}" )
+    [[ -z "${LDAP_PHONE}" ]] && LDAP_PHONE=$( plutil_extract "ldap_users.0.phone" "${tmp_response}" )
+
+    LDAP_POSITION=$( plutil_extract "ldap_users.0.position" "${tmp_response}" )
+
+    rm -f "${tmp_response}"
 
     if [[ -z "${LDAP_EMAIL}" && -z "${LDAP_DEPARTMENT}" ]]; then
         log_message "WARNING: LDAP lookup returned no usable data for user ${LDAP_LOOKUP_USER}."
