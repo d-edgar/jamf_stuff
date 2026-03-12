@@ -240,11 +240,11 @@ try:
     users = data.get('ldap_users', [])
     if users:
         u = users[0]
-        print(u.get('email', ''))
+        print(u.get('email_address', u.get('email', '')))
         print(u.get('department', ''))
-        print(u.get('realname', u.get('full_name', '')))
-        print(u.get('phone', u.get('phone_number', '')))
-        print(u.get('position', u.get('title', '')))
+        print(u.get('realname', u.get('real_name', u.get('full_name', ''))))
+        print(u.get('phone_number', u.get('phone', '')))
+        print(u.get('position', ''))
     else:
         for _ in range(5):
             print('')
