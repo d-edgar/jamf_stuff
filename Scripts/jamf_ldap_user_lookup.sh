@@ -183,27 +183,28 @@ get_computer_id() {
     local lookup_serial_url="${JAMF_PRO_URL}/api/v1/computers-inventory?section=GENERAL&filter=hardware.serialNumber==%22${serial_number}%22"
     log_message "DEBUG: Computer lookup URL: ${lookup_serial_url}"
 
-    local response
-    response=$( /usr/bin/curl \
+    local tmp_response="/tmp/jamf_ldap_response_$$.json"
+
+    /usr/bin/curl \
         --silent \
         --request GET \
         --url "${lookup_serial_url}" \
         --header "Authorization: Bearer ${API_TOKEN}" \
         --header "Accept: application/json" \
-    )
+        --output "${tmp_response}"
 
-    log_message "DEBUG: Computer lookup response: ${response:0:500}"
+    log_message "DEBUG: Response file size: $(wc -c < "${tmp_response}") bytes"
 
     COMPUTER_ID=$( /usr/bin/python3 -c "
-import json, sys
-try:
-    data = json.loads(sys.argv[1])
-    results = data.get('results', [])
-    if results:
-        print(results[0].get('id', ''))
-except Exception as e:
-    print('PARSE_ERROR: ' + str(e), file=sys.stderr)
-" "${response}" 2>>/var/log/jamf_ldap_lookup_debug.log )
+import json
+with open('${tmp_response}') as f:
+    data = json.load(f)
+results = data.get('results', [])
+if results:
+    print(results[0].get('id', ''))
+" 2>>/var/log/jamf_ldap_lookup_debug.log )
+
+    rm -f "${tmp_response}"
 
     log_message "DEBUG: Parsed COMPUTER_ID='${COMPUTER_ID}'"
 
