@@ -194,16 +194,16 @@ get_computer_id() {
 
     log_message "DEBUG: Computer lookup response: ${response:0:500}"
 
-    COMPUTER_ID=$( printf '%s' "${response}" | /usr/bin/python3 -c "
-import sys, json
+    COMPUTER_ID=$( /usr/bin/python3 -c "
+import json, sys
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(sys.argv[1])
     results = data.get('results', [])
     if results:
         print(results[0].get('id', ''))
 except Exception as e:
     print('PARSE_ERROR: ' + str(e), file=sys.stderr)
-" 2>>/var/log/jamf_ldap_lookup_debug.log )
+" "${response}" 2>>/var/log/jamf_ldap_lookup_debug.log )
 
     log_message "DEBUG: Parsed COMPUTER_ID='${COMPUTER_ID}'"
 
