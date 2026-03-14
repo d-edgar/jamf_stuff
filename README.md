@@ -1,8 +1,8 @@
-# Jamf Stuff
+# macOS Admin Toolkit
 
-This repository provides **Jamf Pro Extension Attributes (EAs)** and supporting scripts to monitor and report on the health of **Microsoft Defender for Endpoint (MDE)** on macOS devices. It also includes a collection of general-purpose Jamf Pro scripts for system configuration, user permissions, application management, LDAP-based user lookups, and more.
+A collection of **Jamf Pro Extension Attributes** and **shell scripts** for managing and monitoring macOS fleets. Includes purpose-built EAs for tracking **Microsoft Defender for Endpoint (MDE)** health, along with scripts for application management, user permissions, system configuration, LDAP-based user lookups, and more.
 
-By leveraging these EAs and scripts, you can create **Smart Groups** and **Advanced Searches** in Jamf Pro to dynamically identify Macs that are out of compliance — for example, those with network protection stopped, real-time protection disabled, or outdated engine versions.
+Use these to build **Smart Groups** and **Advanced Searches** in Jamf Pro that dynamically flag out-of-compliance Macs — whether that's network protection stopped, real-time protection disabled, outdated engine versions, or pending OS updates.
 
 ---
 
